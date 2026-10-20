@@ -1,0 +1,112 @@
+﻿// ***********************************************************************
+// Assembly         : IronyModManager.CLI
+// Author           : Lyzair
+// Created          : 10-20-2026
+//
+// Last Modified By : Lyzair
+// Last Modified On : 10-20-2026
+// ***********************************************************************
+// <copyright file="Program.cs" company="Mario">
+//     Mario
+// </copyright>
+// <summary></summary>
+// ***********************************************************************
+
+using System;
+using System.IO;
+using System.Linq;
+using CommandLine;
+using IronyModManager.CLI.Options;
+using IronyModManager.DI;
+using IronyModManager.Localization;
+using IronyModManager.Services.Common;
+using NLog;
+using NLog.Config;
+using NLog.Targets;
+
+namespace IronyModManager.CLI
+{
+    /// <summary>
+    /// Entry point of the CLI.
+    /// </summary>
+    public static class Program
+    {
+        #region Methods
+
+        /// <summary>
+        /// Initializes the services against the given storage root.
+        /// </summary>
+        /// <param name="storageRoot">The storage root.</param>
+        public static void InitServices(string storageRoot)
+        {
+            CliConfiguration.StorageRoot = storageRoot;
+            CurrentLocale.SetCurrent(Shared.Constants.DefaultAppCulture);
+            InitLogging();
+            Bootstrap.Setup(new DIOptions { Container = new SimpleInjector.Container(), PluginPathAndName = Shared.Constants.PluginsPathAndName });
+            Bootstrap.PostStartup();
+        }
+
+        /// <summary>
+        /// Defines the entry point of the application.
+        /// </summary>
+        /// <param name="args">The arguments.</param>
+        /// <returns>System.Int32.</returns>
+        public static int Main(string[] args)
+        {
+            Environment.CurrentDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            var result = CommandLine.Parser.Default.ParseArguments(args, typeof(GamesOptions));
+            if (result.Tag == ParserResultType.NotParsed)
+            {
+                return 2;
+            }
+
+            using var storage = new TempStorage();
+            try
+            {
+                InitServices(storage.Root);
+                return result.Value switch
+                {
+                    GamesOptions => RunGames(Console.Out),
+                    _ => 2
+                };
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Unexpected error: {ex}");
+                return 1;
+            }
+            finally
+            {
+                LogManager.Shutdown();
+            }
+        }
+
+        /// <summary>
+        /// Configures NLog to write warnings and errors to stderr, stdout stays reserved for command output.
+        /// </summary>
+        private static void InitLogging()
+        {
+            var config = new LoggingConfiguration();
+            var stderr = new ConsoleTarget("stderr") { StdErr = true, Layout = "${level:uppercase=true}: ${message} ${exception}" };
+            config.AddRule(LogLevel.Warn, LogLevel.Fatal, stderr);
+            LogManager.Configuration = config;
+        }
+
+        /// <summary>
+        /// Runs the games verb.
+        /// </summary>
+        /// <param name="stdout">The stdout.</param>
+        /// <returns>System.Int32.</returns>
+        private static int RunGames(TextWriter stdout)
+        {
+            foreach (var game in DIResolver.Get<IGameService>().Get())
+            {
+                stdout.WriteLine($"{game.Type}\t{game.UserDirectory}\t{game.WorkshopDirectory?.FirstOrDefault()}");
+            }
+
+            return 0;
+        }
+
+        #endregion Methods
+    }
+}
