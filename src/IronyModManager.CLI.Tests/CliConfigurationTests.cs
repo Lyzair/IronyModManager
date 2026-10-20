@@ -13,6 +13,8 @@
 // ***********************************************************************
 
 using System;
+using System.IO;
+using IronyModManager.Shared;
 using AwesomeAssertions;
 using Xunit;
 
@@ -31,8 +33,25 @@ namespace IronyModManager.CLI.Tests
         [Fact]
         public void GetOptions_uses_given_storage_path()
         {
-            var config = new CliConfiguration("/tmp/x");
-            config.GetOptions().App.StoragePath.Should().Be("/tmp/x");
+            var root = Path.Combine(Path.GetTempPath(), "x");
+            var path = new CliConfiguration(root).GetOptions().App.StoragePath;
+            Path.GetFullPath(path, AppDomain.CurrentDomain.BaseDirectory).Should().Be(root);
+        }
+
+        /// <summary>
+        /// Defines the test method GetOptions_storage_path_survives_irony_path_resolution.
+        /// </summary>
+        [Fact]
+        public void GetOptions_storage_path_survives_irony_path_resolution()
+        {
+            var root = Path.Combine(Path.GetTempPath(), "IronyCLI-test");
+            var configured = new CliConfiguration(root).GetOptions().App.StoragePath;
+
+            // Same steps as DiskOperations.ResolveStoragePath, which drops the leading separator of rooted Unix paths
+            var segments = configured.StandardizeDirectorySeparator().Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+            var resolved = Path.GetFullPath(Path.Combine(segments), AppDomain.CurrentDomain.BaseDirectory);
+
+            resolved.TrimEnd(Path.DirectorySeparatorChar).Should().Be(root.TrimEnd(Path.DirectorySeparatorChar));
         }
 
         /// <summary>

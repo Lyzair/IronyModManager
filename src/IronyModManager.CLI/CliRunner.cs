@@ -19,6 +19,7 @@ using System.Threading.Tasks;
 using IronyModManager.CLI.Conflicts;
 using IronyModManager.CLI.Input;
 using IronyModManager.CLI.Options;
+using IronyModManager.CLI.Output;
 using IronyModManager.Services.Common;
 using IronyModManager.Services.Common.Exceptions;
 
@@ -74,7 +75,16 @@ namespace IronyModManager.CLI
                     collectionName = options.Collection;
                 }
 
-                await analyzer.AnalyzeAsync(game, selection, collectionName, options.IncludeGame);
+                var report = await analyzer.AnalyzeAsync(game, selection, collectionName, options.IncludeGame);
+                if (options.Json)
+                {
+                    JsonReportWriter.Write(report, stdout);
+                }
+                else
+                {
+                    TextReportWriter.Write(report, stdout);
+                }
+
                 return 0;
             }
             catch (CliInputException ex)

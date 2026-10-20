@@ -13,6 +13,7 @@
 // ***********************************************************************
 
 using System;
+using System.IO;
 using IronyModManager.Shared.Configuration;
 
 namespace IronyModManager.CLI
@@ -72,7 +73,9 @@ namespace IronyModManager.CLI
             if (options == null)
             {
                 var result = new DomainConfigurationOptions();
-                result.App.StoragePath = storagePath;
+                // DiskOperations.ResolveStoragePath drops the leading separator of rooted Unix paths and resolves the rest against the base directory,
+                // a path relative to the base directory survives that on every platform
+                result.App.StoragePath = Path.GetRelativePath(AppDomain.CurrentDomain.BaseDirectory, storagePath);
                 result.Formatting.UseSystemCulture = false;
                 result.Steam.UseGameHandler = true;
                 result.Steam.GameHandlerPath = "IronyModManager.GameHandler.exe";

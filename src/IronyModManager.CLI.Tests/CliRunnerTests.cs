@@ -78,6 +78,23 @@ namespace IronyModManager.CLI.Tests
         }
 
         /// <summary>
+        /// Defines the test method RunConflicts_writes_json_report_to_stdout.
+        /// </summary>
+        [Fact]
+        public async Task RunConflicts_writes_json_report_to_stdout()
+        {
+            var (runner, analyzer) = CreateRunner();
+            analyzer.Setup(p => p.AnalyzeAsync(It.IsAny<IGame>(), It.IsAny<ModSelection>(), "IronyCLI-t", false))
+                .ReturnsAsync(new ConflictReport("Stellaris", [], [], []));
+            var stdout = new StringWriter();
+
+            var code = await runner.RunConflictsAsync(new ConflictsOptions { Game = "Stellaris", Playlist = playlistPath, Json = true }, stdout, new StringWriter());
+
+            code.Should().Be(0);
+            ((string)Newtonsoft.Json.Linq.JObject.Parse(stdout.ToString())["game"]).Should().Be("Stellaris");
+        }
+
+        /// <summary>
         /// Defines the test method RunConflicts_requires_exactly_one_input.
         /// </summary>
         /// <param name="playlist">The playlist.</param>

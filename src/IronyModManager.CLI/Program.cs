@@ -15,7 +15,10 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using CommandLine;
+using IronyModManager.CLI.Conflicts;
+using IronyModManager.CLI.Input;
 using IronyModManager.CLI.Options;
 using IronyModManager.DI;
 using IronyModManager.Localization;
@@ -54,7 +57,7 @@ namespace IronyModManager.CLI
         public static int Main(string[] args)
         {
             Environment.CurrentDirectory = AppDomain.CurrentDomain.BaseDirectory;
-            var result = CommandLine.Parser.Default.ParseArguments(args, typeof(GamesOptions));
+            var result = CommandLine.Parser.Default.ParseArguments(args, typeof(GamesOptions), typeof(ConflictsOptions));
             if (result.Tag == ParserResultType.NotParsed)
             {
                 return 2;
@@ -63,12 +66,23 @@ namespace IronyModManager.CLI
             using var storage = new TempStorage();
             try
             {
+                if (result.Value is ConflictsOptions { Collection: { Length: > 0 } } collectionOptions)
+                {
+                    IronyDatabaseImporter.Import(collectionOptions.IronyStorage, storage.Root, GetStorageSegment());
+                }
+
                 InitServices(storage.Root);
                 return result.Value switch
                 {
                     GamesOptions => RunGames(Console.Out),
+                    ConflictsOptions conflictsOptions => CreateRunner().RunConflictsAsync(conflictsOptions, Console.Out, Console.Error).GetAwaiter().GetResult(),
                     _ => 2
                 };
+            }
+            catch (CliInputException ex)
+            {
+                Console.Error.WriteLine(ex.Message);
+                return 2;
             }
             catch (Exception ex)
             {
@@ -79,6 +93,27 @@ namespace IronyModManager.CLI
             {
                 LogManager.Shutdown();
             }
+        }
+
+        /// <summary>
+        /// Creates the runner from the services.
+        /// </summary>
+        /// <returns>CliRunner.</returns>
+        private static CliRunner CreateRunner()
+        {
+            var games = DIResolver.Get<IGameService>();
+            var patches = DIResolver.Get<IModPatchCollectionService>();
+            var analyzer = new ConflictAnalyzer(games, DIResolver.Get<IGameLanguageService>(), patches, DIResolver.Get<IGameIndexService>());
+            return new CliRunner(games, DIResolver.Get<IModService>(), DIResolver.Get<IModCollectionService>(), analyzer);
+        }
+
+        /// <summary>
+        /// Gets the folder below the storage root that Irony's database store uses, derived from the entry assembly's title like JsonStore does.
+        /// </summary>
+        /// <returns>System.String.</returns>
+        private static string GetStorageSegment()
+        {
+            return Assembly.GetEntryAssembly()!.GetCustomAttribute<AssemblyTitleAttribute>()?.Title ?? string.Empty;
         }
 
         /// <summary>
