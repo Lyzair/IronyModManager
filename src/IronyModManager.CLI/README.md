@@ -73,7 +73,11 @@ dotnet build src/IronyModManager.CLI/IronyModManager.CLI.csproj
 dotnet test src/IronyModManager.CLI.Tests/IronyModManager.CLI.Tests.csproj
 ```
 
-The implementation projects (IO, Models, Parser, Services, Storage) are ordinary project references, so their assemblies and NuGet dependencies land in the output folder on every platform. `References/CopyAll` (parser maps) and the GUI's `Localization/*.json` are copied next to the executable.
+The CLI follows the composition model in `AGENTS.md`: it compiles only against the contract/common assemblies its code uses (DI, Localization, Models.Common, Services.Common, Shared, and IO.Common transitively). The runtime implementations (IO, Models, Parser, Services, Storage) are build-only project references (`ReferenceOutputAssembly="false"`), listed as `RuntimeImplementationProject` items, the same way the GUI lists them.
+
+After the build copies the CLI's own files, the `ComposeApplicationOutput` target copies each implementation's build output into the CLI's output folder. That output includes the implementation's assemblies, its NuGet dependencies, `runtimes/**` native assets, symbols and `.deps.json`. Irony's bootstrap then discovers the assemblies at runtime. The target is the cross-platform counterpart of the GUI's Windows-only `cmd/copy-dependencies.bat`. When implementations ship different versions of the same file (for example `System.Linq.Async`), the highest assembly/file version wins, and the target never replaces a file with a lower version. Composed files are recorded for `dotnet clean` and incremental clean.
+
+Building the CLI project on its own also builds the implementation projects first. A full solution build (`dotnet build IronyModManager.sln -c Debug -p:Platform=x64`) puts the CLI in `bin/x64/Debug/net10.0/`. On Linux, that build reports one error: the GUI's composition step can't run `copy-dependencies.bat`. Every other project, the CLI included, builds. `References/CopyAll` (parser maps) and the GUI's `Localization/*.json` are copied next to the executable.
 
 ### Linux
 

@@ -63,19 +63,177 @@
 	</PackageReference>
   </ItemGroup>  
 
+  <!-- Compile-time references: only the contract/common assemblies the CLI code uses (same set as the GUI, minus Common and Platform). -->
   <ItemGroup>
     <ProjectReference Include="..\IronyModManager.DI\IronyModManager.DI.csproj" />
-    <ProjectReference Include="..\IronyModManager.IO\IronyModManager.IO.csproj" />
-    <ProjectReference Include="..\IronyModManager.IO.Common\IronyModManager.IO.Common.csproj" />
     <ProjectReference Include="..\IronyModManager.Localization\IronyModManager.Localization.csproj" />
-    <ProjectReference Include="..\IronyModManager.Models\IronyModManager.Models.csproj" />
     <ProjectReference Include="..\IronyModManager.Models.Common\IronyModManager.Models.Common.csproj" />
-    <ProjectReference Include="..\IronyModManager.Parser\IronyModManager.Parser.csproj" />
-    <ProjectReference Include="..\IronyModManager.Services\IronyModManager.Services.csproj" />
     <ProjectReference Include="..\IronyModManager.Services.Common\IronyModManager.Services.Common.csproj" />
     <ProjectReference Include="..\IronyModManager.Shared\IronyModManager.Shared.csproj" />
-    <ProjectReference Include="..\IronyModManager.Storage\IronyModManager.Storage.csproj" />
-    <ProjectReference Include="..\IronyModManager.Storage.Common\IronyModManager.Storage.Common.csproj" />
   </ItemGroup>
+
+  <!-- Runtime implementations: build-only references (ordering only, no compile/runtime reference), composed into the output by ComposeApplicationOutput. -->
+  <ItemGroup>
+    <RuntimeImplementationProject Include="..\IronyModManager.IO\IronyModManager.IO.csproj" />
+    <RuntimeImplementationProject Include="..\IronyModManager.Models\IronyModManager.Models.csproj" />
+    <RuntimeImplementationProject Include="..\IronyModManager.Parser\IronyModManager.Parser.csproj" />
+    <RuntimeImplementationProject Include="..\IronyModManager.Services\IronyModManager.Services.csproj" />
+    <RuntimeImplementationProject Include="..\IronyModManager.Storage\IronyModManager.Storage.csproj" />
+    <ProjectReference Include="..\IronyModManager.IO\IronyModManager.IO.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\IronyModManager.Models\IronyModManager.Models.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\IronyModManager.Parser\IronyModManager.Parser.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\IronyModManager.Services\IronyModManager.Services.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\IronyModManager.Storage\IronyModManager.Storage.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!--
+    Composition step for the CLI layout. cmd/copy-dependencies.bat is Windows-only and composes the GUI's output folder,
+    so this is its cross-platform MSBuild counterpart: it copies each runtime implementation's own build output (its
+    assemblies plus the NuGet dependencies it copies locally, including runtimes/** native assets) into this executable's
+    output folder, where Irony's bootstrap discovers them. Implementations can carry different versions of the same
+    third-party assembly (for example System.Linq.Async), so a file name present more than once keeps the highest
+    assembly/file version (newest file when versions are equal or not managed), never a version lower than the one
+    already in the output. Symbol files follow the assembly they belong to.
+  -->
+  <UsingTask TaskName="SelectRuntimeImplementationFiles" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <SourceFiles ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+      <DestinationFolder ParameterType="System.String" Required="true" />
+      <FilesToCopy ParameterType="Microsoft.Build.Framework.ITaskItem[]" Output="true" />
+      <DestinationFiles ParameterType="Microsoft.Build.Framework.ITaskItem[]" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.Collections.Generic" />
+      <Using Namespace="System.Diagnostics" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Linq" />
+      <Using Namespace="System.Reflection" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+var versions = new Dictionary<string, Tuple<Version, Version>>(StringComparer.Ordinal);
+Func<string, Tuple<Version, Version>> getVersion = path =>
+{
+    if (versions.TryGetValue(path, out var cached))
+    {
+        return cached;
+    }
+    Tuple<Version, Version> result = null;
+    var extension = Path.GetExtension(path);
+    if (extension.Equals(".dll", StringComparison.OrdinalIgnoreCase) || extension.Equals(".exe", StringComparison.OrdinalIgnoreCase))
+    {
+        try
+        {
+            var assemblyVersion = AssemblyName.GetAssemblyName(path).Version ?? new Version(0, 0);
+            var info = FileVersionInfo.GetVersionInfo(path);
+            result = Tuple.Create(assemblyVersion, new Version(info.FileMajorPart, info.FileMinorPart, info.FileBuildPart, info.FilePrivatePart));
+        }
+        catch (BadImageFormatException)
+        {
+            // Native library: compared by timestamp only.
+        }
+    }
+    versions[path] = result;
+    return result;
+};
+Func<string, string, int> compare = (left, right) =>
+{
+    var leftVersion = getVersion(left);
+    var rightVersion = getVersion(right);
+    if (leftVersion != null && rightVersion != null)
+    {
+        var result = leftVersion.Item1.CompareTo(rightVersion.Item1);
+        if (result == 0)
+        {
+            result = leftVersion.Item2.CompareTo(rightVersion.Item2);
+        }
+        if (result != 0)
+        {
+            return result;
+        }
+    }
+    return File.GetLastWriteTimeUtc(left).CompareTo(File.GetLastWriteTimeUtc(right));
+};
+Func<string, bool> isAssembly = relativePath =>
+    relativePath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) || relativePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+
+var groups = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+var order = new List<string>();
+foreach (var item in SourceFiles)
+{
+    var relativePath = item.GetMetadata("RecursiveDir") + item.GetMetadata("Filename") + item.GetMetadata("Extension");
+    if (!groups.TryGetValue(relativePath, out var sources))
+    {
+        sources = new List<string>();
+        groups[relativePath] = sources;
+        order.Add(relativePath);
+    }
+    sources.Add(item.GetMetadata("FullPath"));
+}
+
+// Relative path without extension -> directory of the winning assembly source, or null when the output keeps its own copy.
+var assemblyWinners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+var toCopy = new List<ITaskItem>();
+var destinations = new List<ITaskItem>();
+foreach (var relativePath in order.Where(isAssembly).Concat(order.Where(p => !isAssembly(p))))
+{
+    var sources = groups[relativePath];
+    var destination = Path.Combine(DestinationFolder, relativePath);
+    var stem = Path.ChangeExtension(relativePath, null);
+    string best = null;
+    var pairedWithAssembly = false;
+    if (!isAssembly(relativePath) && assemblyWinners.TryGetValue(stem, out var winnerDirectory))
+    {
+        pairedWithAssembly = true;
+        best = winnerDirectory == null ? null : sources.FirstOrDefault(p => string.Equals(Path.GetDirectoryName(p), winnerDirectory, StringComparison.Ordinal));
+    }
+    if (!pairedWithAssembly)
+    {
+        best = sources[0];
+        foreach (var candidate in sources.Skip(1))
+        {
+            if (compare(candidate, best) > 0)
+            {
+                best = candidate;
+            }
+        }
+        if (File.Exists(destination) && compare(best, destination) <= 0)
+        {
+            best = null;
+        }
+    }
+    if (isAssembly(relativePath))
+    {
+        assemblyWinners[stem] = best == null ? null : Path.GetDirectoryName(best);
+    }
+    if (best != null)
+    {
+        var copyItem = new TaskItem(best);
+        copyItem.SetMetadata("DestinationFile", destination);
+        toCopy.Add(copyItem);
+    }
+    destinations.Add(new TaskItem(destination));
+}
+FilesToCopy = toCopy.ToArray();
+DestinationFiles = destinations.ToArray();
+]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="ComposeApplicationOutput" AfterTargets="CopyFilesToOutputDirectory">
+    <MSBuild Projects="@(RuntimeImplementationProject)" Targets="GetTargetPath" BuildInParallel="$(BuildInParallel)">
+      <Output TaskParameter="TargetOutputs" ItemName="_RuntimeImplementationTargetPath" />
+    </MSBuild>
+    <Error Condition="!Exists('%(_RuntimeImplementationTargetPath.Identity)')" Text="Runtime implementation output '%(_RuntimeImplementationTargetPath.Identity)' is missing. Build the implementation projects (or the full solution) first." />
+    <ItemGroup>
+      <_RuntimeImplementationOutputDir Include="@(_RuntimeImplementationTargetPath->'%(RootDir)%(Directory)')" />
+      <_RuntimeImplementationFile Include="%(_RuntimeImplementationOutputDir.Identity)**\*.dll;%(_RuntimeImplementationOutputDir.Identity)**\*.exe;%(_RuntimeImplementationOutputDir.Identity)**\*.json;%(_RuntimeImplementationOutputDir.Identity)**\*.pdb;%(_RuntimeImplementationOutputDir.Identity)**\*.dylib;%(_RuntimeImplementationOutputDir.Identity)**\*.so" />
+    </ItemGroup>
+    <SelectRuntimeImplementationFiles SourceFiles="@(_RuntimeImplementationFile)" DestinationFolder="$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(OutDir)'))">
+      <Output TaskParameter="FilesToCopy" ItemName="_RuntimeImplementationFileToCopy" />
+      <!-- Recorded so IncrementalClean keeps the composed files and Clean removes them. -->
+      <Output TaskParameter="DestinationFiles" ItemName="FileWrites" />
+    </SelectRuntimeImplementationFiles>
+    <Copy SourceFiles="@(_RuntimeImplementationFileToCopy)" DestinationFiles="@(_RuntimeImplementationFileToCopy->'%(DestinationFile)')" />
+  </Target>
 
 </Project>
