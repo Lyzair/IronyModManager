@@ -16,6 +16,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using CommandLine;
 using IronyModManager.CLI.Conflicts;
 using IronyModManager.CLI.Input;
@@ -23,6 +24,7 @@ using IronyModManager.CLI.Options;
 using IronyModManager.DI;
 using IronyModManager.Localization;
 using IronyModManager.Services.Common;
+using IronyModManager.Shared.Configuration;
 using NLog;
 using NLog.Config;
 using NLog.Targets;
@@ -37,6 +39,20 @@ namespace IronyModManager.CLI
         #region Methods
 
         /// <summary>
+        /// Ensures the CLI's configuration is in effect. Bootstrap registers every IronyModManager assembly in the folder and later registrations win,
+        /// so next to the GUI the GUI's configuration (and its storage) would replace the CLI's.
+        /// </summary>
+        /// <param name="configuration">The configuration.</param>
+        /// <exception cref="InvalidOperationException">Another assembly overrode the configuration.</exception>
+        public static void EnsureCliConfiguration(IDomainConfiguration configuration)
+        {
+            if (configuration is not CliConfiguration)
+            {
+                throw new InvalidOperationException($"IronyModManager.CLI must be installed in its own folder, '{configuration?.GetType().FullName}' replaced its configuration");
+            }
+        }
+
+        /// <summary>
         /// Initializes the services against the given storage root.
         /// </summary>
         /// <param name="storageRoot">The storage root.</param>
@@ -46,6 +62,8 @@ namespace IronyModManager.CLI
             CurrentLocale.SetCurrent(Shared.Constants.DefaultAppCulture);
             InitLogging();
             Bootstrap.Setup(new DIOptions { Container = new SimpleInjector.Container(), PluginPathAndName = Shared.Constants.PluginsPathAndName });
+            // Checked before PostStartup, the GUI's startup tasks must not run against its own storage
+            EnsureCliConfiguration(DIResolver.Get<IDomainConfiguration>());
             Bootstrap.PostStartup();
         }
 
@@ -56,16 +74,23 @@ namespace IronyModManager.CLI
         /// <returns>System.Int32.</returns>
         public static int Main(string[] args)
         {
-            Environment.CurrentDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            var workingDirectory = Directory.GetCurrentDirectory();
             var result = CommandLine.Parser.Default.ParseArguments(args, typeof(GamesOptions), typeof(ConflictsOptions));
             if (result.Tag == ParserResultType.NotParsed)
             {
                 return 2;
             }
 
-            using var storage = new TempStorage();
+            (result.Value as ConflictsOptions)?.ResolvePaths(workingDirectory);
+            Environment.CurrentDirectory = AppDomain.CurrentDomain.BaseDirectory;
+
+            TempStorage storage = null;
+            // using/finally do not run when the process is killed by a signal, delete the storage before the default termination instead
+            using var sigint = PosixSignalRegistration.Create(PosixSignal.SIGINT, _ => storage?.Dispose());
+            using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, _ => storage?.Dispose());
             try
             {
+                storage = new TempStorage();
                 if (result.Value is ConflictsOptions { Collection: { Length: > 0 } } collectionOptions)
                 {
                     IronyDatabaseImporter.Import(collectionOptions.IronyStorage, storage.Root, GetStorageSegment());
@@ -92,6 +117,7 @@ namespace IronyModManager.CLI
             finally
             {
                 LogManager.Shutdown();
+                storage?.Dispose();
             }
         }
 

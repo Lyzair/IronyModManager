@@ -95,6 +95,40 @@ namespace IronyModManager.CLI.Tests
         }
 
         /// <summary>
+        /// Defines the test method RunConflicts_game_without_mod_folders_returns_2.
+        /// </summary>
+        [Fact]
+        public async Task RunConflicts_game_without_mod_folders_returns_2()
+        {
+            var (runner, analyzer) = CreateRunner(modsAvailable: false);
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var code = await runner.RunConflictsAsync(new ConflictsOptions { Game = "Stellaris", Playlist = playlistPath }, stdout, stderr);
+
+            code.Should().Be(2);
+            stderr.ToString().Should().Contain("Stellaris");
+            stdout.ToString().Should().BeEmpty();
+            analyzer.VerifyNoOtherCalls();
+        }
+
+        /// <summary>
+        /// Defines the test method RunConflicts_without_matched_mods_returns_2.
+        /// </summary>
+        [Fact]
+        public async Task RunConflicts_without_matched_mods_returns_2()
+        {
+            var (runner, analyzer) = CreateRunner(installedRemoteId: 99);
+            var stderr = new StringWriter();
+
+            var code = await runner.RunConflictsAsync(new ConflictsOptions { Game = "Stellaris", Playlist = playlistPath }, new StringWriter(), stderr);
+
+            code.Should().Be(2);
+            stderr.ToString().Should().Contain("One");
+            analyzer.VerifyNoOtherCalls();
+        }
+
+        /// <summary>
         /// Defines the test method RunConflicts_requires_exactly_one_input.
         /// </summary>
         /// <param name="playlist">The playlist.</param>
@@ -115,8 +149,11 @@ namespace IronyModManager.CLI.Tests
         /// Creates the runner.
         /// </summary>
         /// <returns>A runner and its analyzer mock.</returns>
-        private static (CliRunner, Mock<IConflictAnalyzer>) CreateRunner()
+        private static (CliRunner, Mock<IConflictAnalyzer>) CreateRunner(bool modsAvailable = true, long installedRemoteId = 1)
         {
+            var installed = new Mock<IMod>();
+            installed.SetupProperty(p => p.RemoteId, installedRemoteId);
+            installed.SetupProperty(p => p.Name, "One");
             var stellaris = new Mock<IGame>();
             stellaris.SetupProperty(p => p.Type, "Stellaris");
             stellaris.SetupProperty(p => p.IsSelected, true);
@@ -124,7 +161,8 @@ namespace IronyModManager.CLI.Tests
             games.Setup(p => p.Get()).Returns(new[] { stellaris.Object });
             games.Setup(p => p.GetSelected()).Returns(stellaris.Object);
             var mods = new Mock<IModService>();
-            mods.Setup(p => p.GetInstalledModsAsync(It.IsAny<IGame>())).ReturnsAsync(Array.Empty<IMod>());
+            mods.Setup(p => p.RefreshInstalledModsAsync(It.IsAny<IGame>()))
+                .ReturnsAsync(new InstalledModsResult { IsAuthoritative = modsAvailable, Mods = modsAvailable ? new[] { installed.Object } : Array.Empty<IMod>() });
             var analyzer = new Mock<IConflictAnalyzer>();
             return (new CliRunner(games.Object, mods.Object, new Mock<IModCollectionService>().Object, analyzer.Object), analyzer);
         }
@@ -136,7 +174,7 @@ namespace IronyModManager.CLI.Tests
         private static string WritePlaylist()
         {
             var path = Path.Combine(Path.GetTempPath(), $"irony-cli-test-{Guid.NewGuid():N}.json");
-            File.WriteAllText(path, """{"game":"stellaris","name":"t","mods":[]}""");
+            File.WriteAllText(path, """{"game":"stellaris","name":"t","mods":[{"displayName":"One","enabled":true,"position":0,"steamId":"1"}]}""");
             return path;
         }
 

@@ -13,7 +13,7 @@
 // ***********************************************************************
 
 using System;
-using IronyModManager.CLI.Log;
+using IronyModManager.CLI.Logging;
 using IronyModManager.Localization.ResourceProviders;
 using IronyModManager.Shared.Cache;
 using IronyModManager.Shared.Configuration;

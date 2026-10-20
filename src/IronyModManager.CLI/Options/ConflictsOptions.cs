@@ -64,5 +64,30 @@ namespace IronyModManager.CLI.Options
         public string Playlist { get; set; }
 
         #endregion Properties
+
+        #region Methods
+
+        /// <summary>
+        /// Makes the path options absolute, the CLI changes its working directory to its own folder after parsing.
+        /// </summary>
+        /// <param name="workingDirectory">The user's working directory.</param>
+        public void ResolvePaths(string workingDirectory)
+        {
+            Playlist = Resolve(Playlist, workingDirectory);
+            IronyStorage = Resolve(IronyStorage, workingDirectory);
+        }
+
+        /// <summary>
+        /// Resolves the specified path.
+        /// </summary>
+        /// <param name="path">The path.</param>
+        /// <param name="workingDirectory">The working directory.</param>
+        /// <returns>System.String.</returns>
+        private static string Resolve(string path, string workingDirectory)
+        {
+            return string.IsNullOrWhiteSpace(path) ? path : Path.GetFullPath(path, workingDirectory);
+        }
+
+        #endregion Methods
     }
 }

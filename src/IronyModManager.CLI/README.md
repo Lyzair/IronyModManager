@@ -11,7 +11,12 @@ The CLI is read-only. It never writes patch mods, collections, launcher files or
 - The conflict solver keeps definitions in memory (`UseHybridMemory` and `UseDiskSearch` are off).
 - `--collection` reads the GUI's database by copying the newest `IronyModManager/Database_*.json` from the GUI storage into the run's temp folder. The GUI's own files are only read.
 - Logs go to stderr (warnings and errors only), so stdout carries nothing but the report.
+- The temp folder is also removed when the run is interrupted with Ctrl+C (SIGINT) or SIGTERM.
 - The cost: `--include-game` indexes the base game on every run. That took about 6 minutes for Stellaris 4.5, compared with under a minute without it.
+
+## Install it in its own folder
+
+Irony's bootstrap registers every `IronyModManager*.dll` in the executable's folder, and later registrations win. Next to the GUI, the GUI's configuration and storage would replace the CLI's, and the CLI would load the GUI's startup tasks. The CLI checks for this and exits with code 1 before any service starts, so ship it in a separate folder.
 
 ## Usage
 
@@ -21,7 +26,8 @@ IronyModManager.CLI conflicts --playlist <launcher-playlist.json> [--json] [--in
 IronyModManager.CLI conflicts --collection <name> [--irony-storage <dir>] [--json] [--include-game] [--game Stellaris]
 ```
 
-- `games`: lists the detected games with their user and workshop directories.
+- `games`: lists the games Irony knows, with the user and workshop directories it would use. A listed game is not necessarily installed.
+- Relative paths given to `--playlist` and `--irony-storage` are resolved against the current directory.
 - `--playlist`: a Paradox Launcher playlist export, format v3: `{game, name, mods: [{displayName, enabled, position, steamId, pdxId?}]}`. Disabled entries are skipped. Load order is `position`. Entries are matched to installed mods by Steam ID, and local mods without a remote ID are matched by name.
 - `--collection`: the name of an Irony GUI collection.
 - `--irony-storage`: where to find the GUI's storage. The default is `<ApplicationData>/Mario`, which is `~/.config/Mario` on Linux.
@@ -34,7 +40,7 @@ IronyModManager.CLI conflicts --collection <name> [--irony-storage <dir>] [--jso
 |------|---------|
 | 0 | success |
 | 1 | unexpected error (details on stderr) |
-| 2 | bad input: unreadable playlist, unknown game or collection, missing GUI database, or not exactly one of `--playlist` / `--collection` |
+| 2 | bad input: unreadable playlist, unknown game or collection, game not detected (its mod folders are unavailable), no selected entry matches an installed mod, missing GUI database, or not exactly one of `--playlist` / `--collection` |
 | 3 | a mod is too large to parse (`ModTooLargeException`) |
 
 ### JSON output

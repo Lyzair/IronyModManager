@@ -60,7 +60,14 @@ namespace IronyModManager.CLI
                     games.SetSelected(allGames, game);
                 }
 
-                var installed = await mods.GetInstalledModsAsync(game);
+                // A non authoritative result means Irony could not read the game's mod folders, analyzing it would only report every entry as missing
+                var installedResult = await mods.RefreshInstalledModsAsync(game);
+                if (!installedResult.IsAuthoritative)
+                {
+                    throw new CliInputException($"Game '{game.Type}' was not detected or its mod folders are unavailable (user directory: '{game.UserDirectory}')");
+                }
+
+                var installed = installedResult.Mods.ToList();
                 ModSelection selection;
                 string collectionName;
                 if (!string.IsNullOrWhiteSpace(options.Playlist))
@@ -73,6 +80,12 @@ namespace IronyModManager.CLI
                 {
                     selection = new CollectionModSource(collections, mods).Resolve(options.Collection, installed);
                     collectionName = options.Collection;
+                }
+
+                if (selection.Mods.Count == 0)
+                {
+                    var missing = string.Join(", ", selection.Unmatched.Select(p => p.DisplayName));
+                    throw new CliInputException($"No installed mod matched the {selection.Unmatched.Count} selected entries: {missing}");
                 }
 
                 var report = await analyzer.AnalyzeAsync(game, selection, collectionName, options.IncludeGame);

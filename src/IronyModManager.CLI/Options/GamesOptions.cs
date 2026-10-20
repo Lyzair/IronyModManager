@@ -20,7 +20,7 @@ namespace IronyModManager.CLI.Options
     /// <summary>
     /// Options of the games verb.
     /// </summary>
-    [Verb("games", HelpText = "List the games Irony detected.")]
+    [Verb("games", HelpText = "List the games Irony knows with the user and workshop folders it would use.")]
     public class GamesOptions
     {
     }
